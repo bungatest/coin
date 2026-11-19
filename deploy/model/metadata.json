@@ -1,0 +1,42 @@
+{
+  "model_name": "mobilenet_v2",
+  "checkpoint": "best_mobilenetv2.pt",
+  "input_size": 224,
+  "mean": [0.485, 0.456, 0.406],
+  "std": [0.229, 0.224, 0.225],
+  "classes": ["Rp100", "Rp1000", "Rp200", "Rp500"],
+  "classes_metadata": {
+    "Rp100": {
+      "nominal": 100,
+      "display": "Rp 100",
+      "spoken": "Seratus Rupiah",
+      "color": "#4A90E2",
+      "badge_color": "#1E40AF",
+      "description": "Koin Aluminium Rp 100 - Burung Kakaktua Raja / Garuda Pancasila"
+    },
+    "Rp200": {
+      "nominal": 200,
+      "display": "Rp 200",
+      "spoken": "Dua Ratus Rupiah",
+      "color": "#10B981",
+      "badge_color": "#065F46",
+      "description": "Koin Aluminium Rp 200 - Burung Jalak Bali / Garuda Pancasila"
+    },
+    "Rp500": {
+      "nominal": 500,
+      "display": "Rp 500",
+      "spoken": "Lima Ratus Rupiah",
+      "color": "#8B5CF6",
+      "badge_color": "#5B21B6",
+      "description": "Koin Aluminium Rp 500 - Bunga Melati / Garuda Pancasila"
+    },
+    "Rp1000": {
+      "nominal": 1000,
+      "display": "Rp 1.000",
+      "spoken": "Seribu Rupiah",
+      "color": "#F59E0B",
+      "badge_color": "#92400E",
+      "description": "Koin Bimetal / Nikel Rp 1.000 - Angklung & Gedung Sate / Garuda Pancasila"
+    }
+  }
+}

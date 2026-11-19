@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Rupiah Coin Scanner - AI Deteksi Koin Otomatis</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+  <!-- Fullscreen Camera Viewport -->
+  <div class="camera-container" id="cameraContainer">
+    <video id="webcam" autoplay playsinline muted></video>
+    <canvas id="captureCanvas" style="display:none;"></canvas>
+
+    <!-- Top Status Bar -->
+    <header class="top-bar">
+      <div class="brand-pill">
+        <span class="brand-icon">🪙</span>
+        <span class="brand-text">RupiahReader</span>
+      </div>
+
+      <div class="status-badge" id="aiStatusBadge">
+        <span class="pulse-dot"></span>
+        <span class="status-text" id="statusText">AI Ready (MobileNetV2)</span>
+      </div>
+
+      <div class="top-actions">
+        <button id="btnSwitchCamera" class="icon-btn-top" title="Ganti Kamera" aria-label="Ganti Kamera">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M20 10c0-4.4-3.6-8-8-8s-8 3.6-8 8v2"/>
+            <path d="m4 10-3-3 3-3"/>
+            <path d="M4 14c0 4.4 3.6 8 8 8s8-3.6 8-8v-2"/>
+            <path d="m20 14 3 3-3 3"/>
+          </svg>
+        </button>
+        <button id="btnUploadImage" class="icon-btn-top" title="Upload Foto Koin" aria-label="Upload Foto">
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="17 8 12 3 7 8"/>
+            <line x1="12" y1="3" x2="12" y2="15"/>
+          </svg>
+        </button>
+        <input type="file" id="fileInput" accept="image/*" style="display: none;">
+      </div>
+    </header>
+
+    <!-- Center Viewfinder Reticle -->
+    <main class="viewfinder-wrapper">
+      <div class="viewfinder-box" id="viewfinder">
+        <!-- 4 Rounded Reticle Corners -->
+        <span class="reticle-corner top-left"></span>
+        <span class="reticle-corner top-right"></span>
+        <span class="reticle-corner bottom-left"></span>
+        <span class="reticle-corner bottom-right"></span>
+
+        <!-- Center Scanning Line / Pulse Animation -->
+        <div class="laser-scanner"></div>
+
+        <!-- Center Checkmark Badge (Appears when detected with high confidence) -->
+        <div class="detection-badge" id="detectionBadge">
+          <div class="badge-ring"></div>
+          <div class="badge-circle" id="badgeCircle">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="white" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+          </div>
+        </div>
+
+        <p class="viewfinder-hint" id="viewfinderHint">Arahkan koin ke dalam kotak</p>
+      </div>
+    </main>
+
+    <!-- Bottom Floating Pill Card -->
+    <footer class="bottom-sheet">
+      <div class="result-pill-card" id="resultPillCard">
+        <!-- Left Nominal Badge -->
+        <div class="nominal-badge" id="nominalBadge">
+          <span class="badge-label">IDR</span>
+          <span class="badge-val" id="badgeNominalVal">-</span>
+        </div>
+
+        <!-- Middle Result Info -->
+        <div class="result-details">
+          <span class="result-title">Hasil Deteksi</span>
+          <div class="result-nominal-wrapper">
+            <span class="result-nominal" id="resultNominal">Menunggu Koin...</span>
+          </div>
+          <div class="result-meta" id="resultMeta">
+            <span class="conf-text" id="confText">Scanning...</span>
+            <span class="meta-dot">•</span>
+            <span class="speed-text" id="speedText">23 ms</span>
+          </div>
+        </div>
+
+        <!-- Right Quick Controls (Audio Voice & Flashlight) -->
+        <div class="pill-actions">
+          <button id="btnVoiceToggle" class="pill-btn voice-btn active" title="Suara Narasi (TTS)" aria-label="Suara">
+            <svg id="iconVolumeOn" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/>
+            </svg>
+            <svg id="iconVolumeOff" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <line x1="23" y1="9" x2="17" y2="15"/>
+              <line x1="17" y1="9" x2="23" y2="15"/>
+            </svg>
+          </button>
+
+          <button id="btnTorchToggle" class="pill-btn torch-btn" title="Nyalakan Lampu Flash" aria-label="Senter">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- Probability Breakdowns Drawer (Expandable) -->
+      <div class="prob-drawer" id="probDrawer">
+        <div class="prob-header" id="probToggle">
+          <span>Rincian Probabilitas 4 Kelas</span>
+          <span class="chevron-icon">▲</span>
+        </div>
+        <div class="prob-bars" id="probBars">
+          <div class="prob-item" data-class="Rp100">
+            <span class="prob-name">Rp 100</span>
+            <div class="bar-track"><div class="bar-fill" id="bar-Rp100" style="width: 0%"></div></div>
+            <span class="prob-val" id="val-Rp100">0%</span>
+          </div>
+          <div class="prob-item" data-class="Rp200">
+            <span class="prob-name">Rp 200</span>
+            <div class="bar-track"><div class="bar-fill" id="bar-Rp200" style="width: 0%"></div></div>
+            <span class="prob-val" id="val-Rp200">0%</span>
+          </div>
+          <div class="prob-item" data-class="Rp500">
+            <span class="prob-name">Rp 500</span>
+            <div class="bar-track"><div class="bar-fill" id="bar-Rp500" style="width: 0%"></div></div>
+            <span class="prob-val" id="val-Rp500">0%</span>
+          </div>
+          <div class="prob-item" data-class="Rp1000">
+            <span class="prob-name">Rp 1.000</span>
+            <div class="bar-track"><div class="bar-fill" id="bar-Rp1000" style="width: 0%"></div></div>
+            <span class="prob-val" id="val-Rp1000">0%</span>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </div>
+
+  <script src="static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+Model,Accuracy,Precision (Macro),Recall (Macro),F1 (Macro),Parameter (juta),Ukuran (MB),Training (menit),Inferensi (ms)
+CNN Base,0.7753,0.7858,0.7848,0.7698,0.39,1.5,34.62,24.284
+GoogLeNet,0.9438,0.9495,0.9429,0.945,5.6,21.54,15.59,48.315
+MobileNetV2,0.9101,0.9266,0.911,0.9138,2.23,8.73,14.9,23.77
