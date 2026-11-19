@@ -10,7 +10,7 @@ from .model_loader import get_classifier
 BASE_DIR = Path(__file__).resolve().parent.parent
 FRONTEND_DIR = BASE_DIR / "frontend"
 
-app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="/static")
+app = Flask(__name__, static_folder=str(FRONTEND_DIR), static_url_path="")
 CORS(app)  # Enable Cross-Origin Resource Sharing
 
 # Preload model on startup
@@ -22,6 +22,17 @@ print("Model siap digunakan!")
 def index():
     """Menyajikan halaman frontend scanner"""
     return send_from_directory(str(FRONTEND_DIR), "index.html")
+
+@app.route("/<path:filename>", methods=["GET"])
+def serve_static(filename):
+    """Menyajikan aset statis (style.css, app.js, dll)"""
+    file_path = FRONTEND_DIR / filename
+    if file_path.exists():
+        return send_from_directory(str(FRONTEND_DIR), filename)
+    root_file = BASE_DIR / filename
+    if root_file.exists():
+        return send_from_directory(str(BASE_DIR), filename)
+    return "Not Found", 404
 
 @app.route("/health", methods=["GET"])
 @app.route("/api/health", methods=["GET"])

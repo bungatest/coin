@@ -93,11 +93,4 @@ async def predict_base64(payload: Base64ImageRequest):
 
 # Mount frontend directory for static serving
 if FRONTEND_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
-
-    @app.get("/")
-    def serve_index():
-        index_file = FRONTEND_DIR / "index.html"
-        if index_file.exists():
-            return FileResponse(str(index_file))
-        return {"message": "Frontend index.html not yet found"}
+    app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="static")
