@@ -13,7 +13,7 @@
   <!-- Fullscreen Camera Viewport -->
   <div class="camera-container" id="cameraContainer">
     <video id="webcam" autoplay playsinline muted></video>
-    <canvas id="captureCanvas" style="display:none;"></canvas>
+    <canvas id="captureCanvas" width="224" height="224" style="display:none;"></canvas>
 
     <!-- Top Status Bar -->
     <header class="top-bar">
@@ -24,7 +24,7 @@
 
       <div class="status-badge" id="aiStatusBadge">
         <span class="pulse-dot"></span>
-        <span class="status-text" id="statusText">AI Ready (MobileNetV2)</span>
+        <span class="status-text" id="statusText">Memuat AI WebGL...</span>
       </div>
 
       <div class="top-actions">
@@ -91,7 +91,7 @@
           <div class="result-meta" id="resultMeta">
             <span class="conf-text" id="confText">Scanning...</span>
             <span class="meta-dot">•</span>
-            <span class="speed-text" id="speedText">23 ms</span>
+            <span class="speed-text" id="speedText">20 ms</span>
           </div>
         </div>
 
@@ -120,7 +120,7 @@
       <!-- Probability Breakdowns Drawer (Expandable) -->
       <div class="prob-drawer" id="probDrawer">
         <div class="prob-header" id="probToggle">
-          <span>Rincian Probabilitas 4 Kelas</span>
+          <span>Rincian Probabilitas Koin</span>
           <span class="chevron-icon">▲</span>
         </div>
         <div class="prob-bars" id="probBars">
@@ -144,11 +144,18 @@
             <div class="bar-track"><div class="bar-fill" id="bar-Rp1000" style="width: 0%"></div></div>
             <span class="prob-val" id="val-Rp1000">0%</span>
           </div>
+          <div class="prob-item" data-class="garuda">
+            <span class="prob-name">Garuda</span>
+            <div class="bar-track"><div class="bar-fill" id="bar-garuda" style="width: 0%"></div></div>
+            <span class="prob-val" id="val-garuda">0%</span>
+          </div>
         </div>
       </div>
     </footer>
   </div>
 
+  <!-- TensorFlow.js Library for 100% In-Browser Client Inference on GitHub Pages -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.22.0/dist/tf.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
