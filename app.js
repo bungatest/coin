@@ -1,4 +1,4 @@
-// Rupiah Coin Scanner - In-Browser TensorFlow.js WebGL (Direct Client AI)
+// Rupiah Coin Scanner - Advanced Temporal Consensus & Multi-Scale Detail Engine
 
 const DOM = {
   webcam: document.getElementById('webcam'),
@@ -43,20 +43,24 @@ let isVoiceActive = true;
 let lastSpokenNominal = null;
 let lastSpokenTime = 0;
 
+// Stabilizer Buffer (Anti-Flicker)
+const BUFFER_SIZE = 6;
+const historyBuffer = [];
+let lockedPrediction = null;
+let lockCounter = 0;
+
 // 1. Inisialisasi Model AI TensorFlow.js
 async function initAIModel() {
   DOM.statusText.textContent = "Memuat AI WebGL...";
-  
-  // Tunggu pustaka TFJS jika belum siap
+
   let waitCount = 0;
-  while (typeof tf === 'undefined' && waitCount < 25) {
+  while (typeof tf === 'undefined' && waitCount < 30) {
     await new Promise(r => setTimeout(r, 200));
     waitCount++;
   }
 
   if (typeof tf === 'undefined') {
     DOM.statusText.textContent = "Error: TFJS CDN gagal dimuat";
-    console.error("TensorFlow.js library not loaded");
     return;
   }
 
@@ -92,14 +96,14 @@ async function initAIModel() {
     }
 
     if (tfModel) {
-      // Warmup forward pass untuk kompilasi shader WebGL
+      // Warmup forward pass
       tf.tidy(() => {
         const dummy = tf.zeros([1, 224, 224, 3]);
         tfModel.predict(dummy);
       });
       modelReady = true;
       const backendName = tf.getBackend().toUpperCase();
-      DOM.statusText.textContent = `AI Ready (${backendName})`;
+      DOM.statusText.textContent = `AI Ready (${backendName} Stabilized)`;
       console.log(`[AI Engine] MobileNetV2 Koin Siap Aktif (${backendName})!`);
       return;
     } else {
@@ -196,22 +200,22 @@ DOM.fileInput.addEventListener('change', async (e) => {
     ctx.drawImage(img, 0, 0, 224, 224);
 
     if (modelReady && tfModel) {
-      await predictFromCanvas(canvas);
+      historyBuffer.length = 0; // reset buffer
+      await runSingleInference(canvas, true);
     }
   };
   img.src = URL.createObjectURL(file);
 });
 
-// Crop area viewfinder ke 224x224 canvas
-function prepareViewfinderCanvas() {
+// Crop area viewfinder ke 224x224 canvas dengan enhancement kontras angka timbul
+function prepareMultiScaleCanvas(scaleRatio = 0.65) {
   if (!DOM.webcam.videoWidth || !DOM.webcam.videoHeight) return null;
 
   const vw = DOM.webcam.videoWidth;
   const vh = DOM.webcam.videoHeight;
   const minDim = Math.min(vw, vh);
 
-  // Crop bujur sangkar di tengah reticle (70% dari minDim)
-  const cropSize = Math.floor(minDim * 0.70);
+  const cropSize = Math.floor(minDim * scaleRatio);
   const sx = Math.floor((vw - cropSize) / 2);
   const sy = Math.floor((vh - cropSize) / 2);
 
@@ -219,12 +223,16 @@ function prepareViewfinderCanvas() {
   canvas.width = 224;
   canvas.height = 224;
   const ctx = canvas.getContext('2d');
+
+  // Ringan tingkatkan kontras untuk mempertegas lekukan angka timbul ("200", "500", "1000")
+  ctx.filter = "contrast(1.15) brightness(0.98)";
   ctx.drawImage(DOM.webcam, sx, sy, cropSize, cropSize, 0, 0, 224, 224);
+  ctx.filter = "none";
 
   return canvas;
 }
 
-// Auto Scanner Loop (Realtime 350ms)
+// Auto Scanner Loop (Interval 280ms)
 function startAutoScanner() {
   if (isScanning) return;
   isScanning = true;
@@ -233,26 +241,26 @@ function startAutoScanner() {
     if (!isScanning) return;
 
     if (modelReady && tfModel) {
-      const canvas = prepareViewfinderCanvas();
-      if (canvas) {
-        await predictFromCanvas(canvas);
+      // Menggunakan dual crop: Scale 0.58 (Fokus Dekat / Angka Tengah) & Scale 0.72 (Kontur Lengkap)
+      const tightCanvas = prepareMultiScaleCanvas(0.58);
+      if (tightCanvas) {
+        await runSingleInference(tightCanvas, false);
       }
     }
 
-    setTimeout(loop, 350);
+    setTimeout(loop, 280);
   }
 
   loop();
 }
 
-// Inferensi langsung di browser menggunakan TensorFlow.js WebGL
-async function predictFromCanvas(canvas) {
+// Eksekusi Prediksi dengan Temporal Consensus Filter (Anti-Lompat / Stabilizer)
+async function runSingleInference(canvas, isUpload = false) {
   const t0 = performance.now();
   let tensor = null;
   let prediction = null;
 
   try {
-    // Normalisasi MobileNetV2: [0, 255] -> [-1, 1]
     tensor = tf.tidy(() => {
       return tf.browser.fromPixels(canvas)
         .toFloat()
@@ -262,26 +270,60 @@ async function predictFromCanvas(canvas) {
     });
 
     prediction = tfModel.predict(tensor);
-    const probs = await prediction.data();
+    const rawProbs = await prediction.data();
     const latency = Math.round(performance.now() - t0);
 
-    // Cari probabilitas tertinggi
-    let maxIdx = 0;
-    let maxProb = 0;
-    for (let i = 0; i < probs.length; i++) {
-      if (probs[i] > maxProb) {
-        maxProb = probs[i];
-        maxIdx = i;
+    // Masukkan ke history buffer (Moving Window)
+    historyBuffer.push(Array.from(rawProbs));
+    if (historyBuffer.length > BUFFER_SIZE) {
+      historyBuffer.shift();
+    }
+
+    // Hitung rata-rata probabilitas tertimbang (Moving Average)
+    const avgProbs = new Array(5).fill(0);
+    for (let f = 0; f < historyBuffer.length; f++) {
+      const weight = 1 + (f * 0.2); // frame terbaru berbobot lebih tinggi
+      for (let c = 0; c < 5; c++) {
+        avgProbs[c] += historyBuffer[f][c] * weight;
       }
     }
 
-    const detected = COIN_CLASSES[maxIdx] || COIN_CLASSES[0];
+    // Normalisasi kembali bobot
+    let sumWeights = 0;
+    for (let f = 0; f < historyBuffer.length; f++) sumWeights += (1 + f * 0.2);
+    for (let c = 0; c < 5; c++) avgProbs[c] /= sumWeights;
 
-    // Update rincian probabilitas di drawer
-    for (let i = 0; i < probs.length; i++) {
-      const clsInfo = COIN_CLASSES[i];
+    // Cari kelas terbaik dari rata-rata konsensus
+    let bestIdx = 0;
+    let bestProb = 0;
+    for (let c = 0; c < 5; c++) {
+      if (avgProbs[c] > bestProb) {
+        bestProb = avgProbs[c];
+        bestIdx = c;
+      }
+    }
+
+    // Hitung konsistensi vote (berapa frame yang memilih kelas ini)
+    let agreementCount = 0;
+    for (const frameProbs of historyBuffer) {
+      let fMaxIdx = 0, fMaxVal = 0;
+      for (let c = 0; c < 5; c++) {
+        if (frameProbs[c] > fMaxVal) {
+          fMaxVal = frameProbs[c];
+          fMaxIdx = c;
+        }
+      }
+      if (fMaxIdx === bestIdx) agreementCount++;
+    }
+
+    const consensusRate = historyBuffer.length > 0 ? (agreementCount / historyBuffer.length) : 0;
+    const detected = COIN_CLASSES[bestIdx] || COIN_CLASSES[0];
+
+    // Update Drawer Rincian Probabilitas (Smooth)
+    for (let c = 0; c < 5; c++) {
+      const clsInfo = COIN_CLASSES[c];
       if (clsInfo) {
-        const pct = Math.round(probs[i] * 100);
+        const pct = Math.round(avgProbs[c] * 100);
         const bar = document.getElementById(clsInfo.barId);
         const val = document.getElementById(clsInfo.valId);
         if (bar) bar.style.width = `${pct}%`;
@@ -291,34 +333,53 @@ async function predictFromCanvas(canvas) {
 
     DOM.speedText.textContent = `${latency} ms`;
 
-    // Filter deteksi koin (threshold 0.50)
-    if (maxProb >= 0.50) {
+    // Syarat Konfirmasi Koin (Lock):
+    // 1. Probabilitas rata-rata >= 48%
+    // 2. Konsensus minimal 4 dari 6 frame sepakat (atau upload langsung)
+    const isStable = isUpload || (consensusRate >= 0.65 && bestProb >= 0.48 && historyBuffer.length >= 4);
+
+    if (isStable) {
+      if (lockedPrediction === detected.code) {
+        lockCounter++;
+      } else {
+        lockedPrediction = detected.code;
+        lockCounter = 1;
+      }
+
+      // Update Tampilan Hasil
       DOM.resultNominal.textContent = detected.display;
       DOM.badgeNominalVal.textContent = detected.nominal > 0 ? `${detected.nominal}` : 'GRD';
       DOM.nominalBadge.style.backgroundColor = detected.color;
       DOM.badgeCircle.style.backgroundColor = detected.color;
-      DOM.confText.textContent = `Akurasi ${(maxProb * 100).toFixed(1)}%`;
+      DOM.confText.textContent = `Akurasi ${(bestProb * 100).toFixed(1)}% (Stabil ${agreementCount}/${historyBuffer.length})`;
       DOM.confText.style.color = '#059669';
 
       DOM.detectionBadge.classList.add('active');
-      DOM.viewfinderHint.textContent = `Terdeteksi: ${detected.display}`;
+      DOM.viewfinderHint.textContent = `Koin Stabil: ${detected.display}`;
 
-      // Narasi Suara TTS
+      // Narasi Suara TTS (dengan jeda 3 detik agar tidak mengulang terus)
       const now = Date.now();
-      if (isVoiceActive && (detected.code !== lastSpokenNominal || now - lastSpokenTime > 3500)) {
+      if (isVoiceActive && (detected.code !== lastSpokenNominal || now - lastSpokenTime > 3000)) {
         speakNominal(detected.spoken);
         lastSpokenNominal = detected.code;
         lastSpokenTime = now;
       }
     } else {
-      DOM.confText.textContent = "Scanning...";
-      DOM.confText.style.color = "#94A3B8";
-      DOM.detectionBadge.classList.remove('active');
-      DOM.viewfinderHint.textContent = "Arahkan koin ke dalam kotak";
+      // Masih dalam fase pengumpulan frame / belum stabil
+      if (bestProb > 0.35 && historyBuffer.length >= 2) {
+        DOM.confText.textContent = `Menstabilkan (${agreementCount}/${historyBuffer.length})...`;
+        DOM.confText.style.color = "#EAB308";
+        DOM.viewfinderHint.textContent = `Tahan posisi koin: ${detected.display}?`;
+      } else {
+        DOM.confText.textContent = "Scanning...";
+        DOM.confText.style.color = "#94A3B8";
+        DOM.detectionBadge.classList.remove('active');
+        DOM.viewfinderHint.textContent = "Posisikan koin pas di dalam kotak";
+      }
     }
 
   } catch (err) {
-    console.warn("Client inference error:", err);
+    console.warn("[AI Engine] Inference error:", err);
   } finally {
     if (tensor) tensor.dispose();
     if (prediction) prediction.dispose();
@@ -339,7 +400,7 @@ function speakNominal(text) {
   window.speechSynthesis.speak(utterance);
 }
 
-// Toggle Probability Drawer
+// Toggle Drawer
 DOM.probToggle.addEventListener('click', () => {
   DOM.probDrawer.classList.toggle('collapsed');
 });
