@@ -1,4 +1,4 @@
-// Rupiah Coin Scanner - Dual Engine (TensorFlow.js WebGL In-Browser + Flask API Fallback)
+// Rupiah Coin Scanner - In-Browser TensorFlow.js WebGL (Direct Client AI)
 
 const DOM = {
   webcam: document.getElementById('webcam'),
@@ -42,56 +42,73 @@ let isTorchOn = false;
 let isVoiceActive = true;
 let lastSpokenNominal = null;
 let lastSpokenTime = 0;
-let lastPrediction = null;
 
-// 1. Inisialisasi Model AI TensorFlow.js (Berjalan 100% di Browser / GitHub Pages)
+// 1. Inisialisasi Model AI TensorFlow.js
 async function initAIModel() {
-  try {
-    DOM.statusText.textContent = "Memuat AI WebGL...";
-    if (typeof tf !== 'undefined') {
-      await tf.ready();
-      try {
-        await tf.setBackend('webgl');
-      } catch (e) {
-        await tf.setBackend('cpu');
-      }
-      
-      const modelLocations = [
-        "model_coin_tfjs/model.json",
-        "./model_coin_tfjs/model.json",
-        "deploy/model_coin_tfjs/model.json",
-        "/coin/model_coin_tfjs/model.json"
-      ];
-
-      for (const loc of modelLocations) {
-        try {
-          console.log("[AI Engine] Mencoba memuat model dari:", loc);
-          tfModel = await tf.loadLayersModel(loc, { requestInit: { cache: "no-store" } });
-          if (tfModel) break;
-        } catch (err) {
-          // coba lokasi berikutnya
-        }
-      }
-
-      if (tfModel) {
-        // Warmup model forward pass
-        tf.tidy(() => {
-          const dummy = tf.zeros([1, 224, 224, 3]);
-          tfModel.predict(dummy);
-        });
-        modelReady = true;
-        const backendName = tf.getBackend().toUpperCase();
-        DOM.statusText.textContent = `AI Ready (${backendName})`;
-        console.log(`[AI Engine] Model loaded successfully with ${backendName} backend!`);
-        return;
-      }
-    }
-  } catch (err) {
-    console.warn("[AI Engine] TFJS model load error, fallback ke API lokal:", err);
+  DOM.statusText.textContent = "Memuat AI WebGL...";
+  
+  // Tunggu pustaka TFJS jika belum siap
+  let waitCount = 0;
+  while (typeof tf === 'undefined' && waitCount < 25) {
+    await new Promise(r => setTimeout(r, 200));
+    waitCount++;
   }
 
-  // Jika TFJS tidak dapat dimuat, gunakan fallback API backend
-  DOM.statusText.textContent = "AI Ready (API Mode)";
+  if (typeof tf === 'undefined') {
+    DOM.statusText.textContent = "Error: TFJS CDN gagal dimuat";
+    console.error("TensorFlow.js library not loaded");
+    return;
+  }
+
+  try {
+    await tf.ready();
+    try {
+      await tf.setBackend('webgl');
+    } catch (e) {
+      console.warn("WebGL unavailable, using CPU:", e);
+      await tf.setBackend('cpu');
+    }
+
+    const modelLocations = [
+      "model_coin_tfjs/model.json",
+      "./model_coin_tfjs/model.json",
+      "/coin/model_coin_tfjs/model.json",
+      "deploy/model_coin_tfjs/model.json"
+    ];
+
+    let lastError = null;
+    for (const loc of modelLocations) {
+      try {
+        console.log("[AI Engine] Memuat model dari:", loc);
+        tfModel = await tf.loadLayersModel(loc, { requestInit: { cache: "no-store" } });
+        if (tfModel) {
+          console.log("[AI Engine] Sukses memuat model dari:", loc);
+          break;
+        }
+      } catch (err) {
+        lastError = err;
+        console.warn(`[AI Engine] Gagal dari ${loc}:`, err);
+      }
+    }
+
+    if (tfModel) {
+      // Warmup forward pass untuk kompilasi shader WebGL
+      tf.tidy(() => {
+        const dummy = tf.zeros([1, 224, 224, 3]);
+        tfModel.predict(dummy);
+      });
+      modelReady = true;
+      const backendName = tf.getBackend().toUpperCase();
+      DOM.statusText.textContent = `AI Ready (${backendName})`;
+      console.log(`[AI Engine] MobileNetV2 Koin Siap Aktif (${backendName})!`);
+      return;
+    } else {
+      throw lastError || new Error("File model_coin_tfjs/model.json tidak ditemukan");
+    }
+  } catch (err) {
+    console.error("[AI Engine] Error inisialisasi model:", err);
+    DOM.statusText.textContent = "Error memuat model AI";
+  }
 }
 
 // 2. Inisialisasi Kamera
@@ -118,7 +135,7 @@ async function startCamera() {
   } catch (err) {
     console.warn("Camera init error or fallback:", err);
     DOM.statusText.textContent = "Kamera non-aktif (Upload mode)";
-    DOM.viewfinderHint.textContent = "Klik tombol upload di atas untuk menguji foto koin";
+    DOM.viewfinderHint.textContent = "Klik tombol upload di atas untuk memilih foto koin";
   }
 }
 
@@ -161,7 +178,7 @@ DOM.btnVoiceToggle.addEventListener('click', () => {
   }
 });
 
-// Upload Foto Koin (Fallback)
+// Upload Foto Koin
 DOM.btnUploadImage.addEventListener('click', () => {
   DOM.fileInput.click();
 });
@@ -180,17 +197,6 @@ DOM.fileInput.addEventListener('change', async (e) => {
 
     if (modelReady && tfModel) {
       await predictFromCanvas(canvas);
-    } else {
-      // Fallback via API backend
-      const formData = new FormData();
-      formData.append('file', file);
-      try {
-        const res = await fetch('/api/predict', { method: 'POST', body: formData });
-        const data = await res.json();
-        handlePredictionResult(data);
-      } catch (err) {
-        console.error("API error:", err);
-      }
     }
   };
   img.src = URL.createObjectURL(file);
@@ -204,8 +210,8 @@ function prepareViewfinderCanvas() {
   const vh = DOM.webcam.videoHeight;
   const minDim = Math.min(vw, vh);
 
-  // Crop bujur sangkar di tengah reticle (72% dari minDim)
-  const cropSize = Math.floor(minDim * 0.72);
+  // Crop bujur sangkar di tengah reticle (70% dari minDim)
+  const cropSize = Math.floor(minDim * 0.70);
   const sx = Math.floor((vw - cropSize) / 2);
   const sy = Math.floor((vh - cropSize) / 2);
 
@@ -218,7 +224,7 @@ function prepareViewfinderCanvas() {
   return canvas;
 }
 
-// Auto Scanner Loop (Realtime 350-500ms)
+// Auto Scanner Loop (Realtime 350ms)
 function startAutoScanner() {
   if (isScanning) return;
   isScanning = true;
@@ -226,32 +232,32 @@ function startAutoScanner() {
   async function loop() {
     if (!isScanning) return;
 
-    const canvas = prepareViewfinderCanvas();
-    if (canvas) {
-      if (modelReady && tfModel) {
+    if (modelReady && tfModel) {
+      const canvas = prepareViewfinderCanvas();
+      if (canvas) {
         await predictFromCanvas(canvas);
-      } else {
-        // Fallback jika model tfjs belum siap
-        await predictFromBackendAPI(canvas);
       }
     }
 
-    setTimeout(loop, 400);
+    setTimeout(loop, 350);
   }
 
   loop();
 }
 
-// Inferensi langsung di browser menggunakan TensorFlow.js
+// Inferensi langsung di browser menggunakan TensorFlow.js WebGL
 async function predictFromCanvas(canvas) {
   const t0 = performance.now();
   let tensor = null;
   let prediction = null;
 
   try {
+    // Normalisasi MobileNetV2: [0, 255] -> [-1, 1]
     tensor = tf.tidy(() => {
       return tf.browser.fromPixels(canvas)
         .toFloat()
+        .div(127.5)
+        .sub(1.0)
         .expandDims(0);
     });
 
@@ -270,7 +276,7 @@ async function predictFromCanvas(canvas) {
     }
 
     const detected = COIN_CLASSES[maxIdx] || COIN_CLASSES[0];
-    
+
     // Update rincian probabilitas di drawer
     for (let i = 0; i < probs.length; i++) {
       const clsInfo = COIN_CLASSES[i];
@@ -285,8 +291,8 @@ async function predictFromCanvas(canvas) {
 
     DOM.speedText.textContent = `${latency} ms`;
 
-    // Filter deteksi koin (threshold 0.55)
-    if (maxProb >= 0.55) {
+    // Filter deteksi koin (threshold 0.50)
+    if (maxProb >= 0.50) {
       DOM.resultNominal.textContent = detected.display;
       DOM.badgeNominalVal.textContent = detected.nominal > 0 ? `${detected.nominal}` : 'GRD';
       DOM.nominalBadge.style.backgroundColor = detected.color;
@@ -316,54 +322,6 @@ async function predictFromCanvas(canvas) {
   } finally {
     if (tensor) tensor.dispose();
     if (prediction) prediction.dispose();
-  }
-}
-
-// Fallback jika menggunakan server API backend (Localhost Flask/FastAPI)
-async function predictFromBackendAPI(canvas) {
-  const base64Data = canvas.toDataURL('image/jpeg', 0.85);
-  try {
-    const res = await fetch('/api/predict-base64', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ image: base64Data, crop_center_ratio: 1.0 })
-    });
-    if (res.ok) {
-      const data = await res.json();
-      handlePredictionResult(data);
-    }
-  } catch (e) {
-    // Abaikan jika server backend tidak online di GitHub Pages
-  }
-}
-
-function handlePredictionResult(data) {
-  const { display, spoken, color, confidence, is_confident, probabilities, inference_time_ms } = data;
-  if (probabilities) {
-    for (const [cls, prob] of Object.entries(probabilities)) {
-      const pct = Math.round(prob * 100);
-      const bar = document.getElementById(`bar-${cls}`);
-      const val = document.getElementById(`val-${cls}`);
-      if (bar) bar.style.width = `${pct}%`;
-      if (val) val.textContent = `${pct}%`;
-    }
-  }
-  DOM.speedText.textContent = `${inference_time_ms} ms`;
-  if (is_confident && confidence >= 0.55) {
-    DOM.resultNominal.textContent = display;
-    DOM.badgeNominalVal.textContent = display.replace('Rp ', '');
-    DOM.nominalBadge.style.backgroundColor = color || '#7C3AED';
-    DOM.badgeCircle.style.backgroundColor = color || '#7C3AED';
-    DOM.confText.textContent = `Akurasi ${(confidence * 100).toFixed(1)}%`;
-    DOM.confText.style.color = '#059669';
-    DOM.detectionBadge.classList.add('active');
-    DOM.viewfinderHint.textContent = `Terdeteksi: ${display}`;
-    const now = Date.now();
-    if (isVoiceActive && (display !== lastSpokenNominal || now - lastSpokenTime > 3500)) {
-      speakNominal(spoken);
-      lastSpokenNominal = display;
-      lastSpokenTime = now;
-    }
   }
 }
 
