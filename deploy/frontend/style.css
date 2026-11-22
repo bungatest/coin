@@ -488,3 +488,18 @@ body, html {
     font-size: 18px;
   }
 }
+
+.pill-btn.ocr-btn {
+  background: linear-gradient(135deg, #10B981, #059669);
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.45);
+}
+
+.pill-btn.ocr-btn.scanning {
+  animation: pulseOcr 0.8s ease-in-out infinite alternate;
+  background: linear-gradient(135deg, #F59E0B, #D97706);
+}
+
+@keyframes pulseOcr {
+  from { transform: scale(1); box-shadow: 0 0 6px #F59E0B; }
+  to { transform: scale(1.12); box-shadow: 0 0 18px #F59E0B; }
+}

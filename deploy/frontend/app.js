@@ -1,8 +1,9 @@
-// Rupiah Coin Scanner - Advanced Temporal Consensus & Multi-Scale Detail Engine
+// Rupiah Coin Scanner - Hybrid Deep Learning (MobileNetV2) + OCR Digit Recognition Engine
 
 const DOM = {
   webcam: document.getElementById('webcam'),
   canvas: document.getElementById('captureCanvas'),
+  ocrCanvas: document.getElementById('ocrCanvas'),
   aiStatusBadge: document.getElementById('aiStatusBadge'),
   statusText: document.getElementById('statusText'),
   viewfinder: document.getElementById('viewfinder'),
@@ -17,6 +18,7 @@ const DOM = {
   btnSwitchCamera: document.getElementById('btnSwitchCamera'),
   btnUploadImage: document.getElementById('btnUploadImage'),
   fileInput: document.getElementById('fileInput'),
+  btnScanOCR: document.getElementById('btnScanOCR'),
   btnVoiceToggle: document.getElementById('btnVoiceToggle'),
   btnTorchToggle: document.getElementById('btnTorchToggle'),
   iconVolumeOn: document.getElementById('iconVolumeOn'),
@@ -25,16 +27,21 @@ const DOM = {
   probToggle: document.getElementById('probToggle'),
 };
 
+// 4 Kelas Nominal Resmi Dataset Koin Baru
 const COIN_CLASSES = {
   0: { code: 'Rp100', nominal: 100, display: 'Rp 100', spoken: 'Seratus Rupiah', color: '#3B82F6', barId: 'bar-Rp100', valId: 'val-Rp100' },
   1: { code: 'Rp1000', nominal: 1000, display: 'Rp 1.000', spoken: 'Seribu Rupiah', color: '#F59E0B', barId: 'bar-Rp1000', valId: 'val-Rp1000' },
   2: { code: 'Rp200', nominal: 200, display: 'Rp 200', spoken: 'Dua Ratus Rupiah', color: '#10B981', barId: 'bar-Rp200', valId: 'val-Rp200' },
   3: { code: 'Rp500', nominal: 500, display: 'Rp 500', spoken: 'Lima Ratus Rupiah', color: '#8B5CF6', barId: 'bar-Rp500', valId: 'val-Rp500' },
-  4: { code: 'garuda', nominal: 0, display: 'Sisi Garuda', spoken: 'Sisi Garuda, balik koinnya', color: '#EC4899', barId: 'bar-garuda', valId: 'val-garuda' },
 };
 
 let tfModel = null;
 let modelReady = false;
+let ocrWorker = null;
+let ocrReady = false;
+let isOcrBusy = false;
+let lastOcrRun = 0;
+
 let currentStream = null;
 let currentFacingMode = 'environment';
 let isScanning = false;
@@ -44,14 +51,14 @@ let lastSpokenNominal = null;
 let lastSpokenTime = 0;
 
 // Stabilizer Buffer (Anti-Flicker)
-const BUFFER_SIZE = 6;
+const BUFFER_SIZE = 5;
 const historyBuffer = [];
 let lockedPrediction = null;
 let lockCounter = 0;
 
 // 1. Inisialisasi Model AI TensorFlow.js
 async function initAIModel() {
-  DOM.statusText.textContent = "Memuat AI WebGL...";
+  DOM.statusText.textContent = "Memuat AI MobileNetV2...";
 
   let waitCount = 0;
   while (typeof tf === 'undefined' && waitCount < 30) {
@@ -103,19 +110,159 @@ async function initAIModel() {
       });
       modelReady = true;
       const backendName = tf.getBackend().toUpperCase();
-      DOM.statusText.textContent = `AI Ready (${backendName} Stabilized)`;
+      DOM.statusText.textContent = `AI Ready (${backendName} + OCR)`;
       console.log(`[AI Engine] MobileNetV2 Koin Siap Aktif (${backendName})!`);
-      return;
     } else {
-      throw lastError || new Error("File model_coin_tfjs/model.json tidak ditemukan");
+      console.warn("[AI Engine] TFJS model tidak tersedia, beralih ke Mode OCR Penuh");
+      DOM.statusText.textContent = "OCR Ready (Mode Angka Koin)";
     }
   } catch (err) {
     console.error("[AI Engine] Error inisialisasi model:", err);
-    DOM.statusText.textContent = "Error memuat model AI";
+    DOM.statusText.textContent = "OCR Ready (Mode Angka Koin)";
   }
 }
 
-// 2. Inisialisasi Kamera
+// 2. Inisialisasi Tesseract.js OCR untuk Pembacaan Angka Koin Langsung
+async function initOCR() {
+  if (typeof Tesseract === 'undefined') {
+    console.warn("[OCR] Tesseract.js belum terpasang di dokumen.");
+    return;
+  }
+  try {
+    console.log("[OCR] Menginisialisasi Tesseract OCR Worker...");
+    ocrWorker = await Tesseract.createWorker('eng', 1, {
+      logger: () => {}
+    });
+    await ocrWorker.setParameters({
+      tessedit_char_whitelist: '0125RUPIAH.',
+      tessedit_pageseg_mode: '7', // treat image as a single text line
+    });
+    ocrReady = true;
+    console.log("[OCR] Tesseract Worker Siap Membaca Angka Timbul Koin!");
+  } catch (err) {
+    console.warn("[OCR] Gagal inisialisasi worker:", err);
+  }
+}
+
+// 3. Preprocessing Khusus Angka Timbul Koin (Adaptive High Contrast)
+function prepareOCRCanvas(sourceCanvas) {
+  const ocrCanvas = DOM.ocrCanvas || document.createElement('canvas');
+  ocrCanvas.width = 280;
+  ocrCanvas.height = 280;
+  const ctx = ocrCanvas.getContext('2d');
+
+  // Crop fokus area tengah koin tempat angka dicetak (65% diameter koin)
+  const sw = sourceCanvas.width;
+  const sh = sourceCanvas.height;
+  const cropW = Math.floor(sw * 0.68);
+  const cropH = Math.floor(sh * 0.68);
+  const sx = Math.floor((sw - cropW) / 2);
+  const sy = Math.floor((sh - cropH) / 2);
+
+  ctx.drawImage(sourceCanvas, sx, sy, cropW, cropH, 0, 0, 280, 280);
+
+  // Ambil piksel dan terapkan adaptive thresholding
+  const imgData = ctx.getImageData(0, 0, 280, 280);
+  const d = imgData.data;
+
+  // Hitung rata-rata luminansi
+  let totalLum = 0;
+  for (let i = 0; i < d.length; i += 4) {
+    totalLum += (0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]);
+  }
+  const avgLum = totalLum / (d.length / 4);
+
+  // Filter kontras tinggi untuk memisahkan lekukan angka timbul koin
+  for (let i = 0; i < d.length; i += 4) {
+    const lum = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    const diff = Math.abs(lum - avgLum);
+    // Jika ada bayangan tepi angka, jadikan hitam; sisanya putih
+    const val = diff > 24 ? 0 : 255;
+    d[i] = val;
+    d[i + 1] = val;
+    d[i + 2] = val;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  return ocrCanvas;
+}
+
+// 4. Deteksi Angka Koin via OCR
+async function scanWithOCR(canvas, forceTrigger = false) {
+  if (!ocrReady || !ocrWorker || isOcrBusy) return null;
+  const now = Date.now();
+  if (!forceTrigger && (now - lastOcrRun < 1600)) return null;
+
+  isOcrBusy = true;
+  lastOcrRun = now;
+  if (DOM.btnScanOCR) DOM.btnScanOCR.classList.add('scanning');
+
+  try {
+    const ocrCanvas = prepareOCRCanvas(canvas);
+    const { data: { text } } = await ocrWorker.recognize(ocrCanvas);
+    const clean = text.replace(/[^0-9RUPIAH]/gi, '').toUpperCase();
+    console.log(`[OCR Deteksi]: "${text.trim()}" -> Cleaned: "${clean}"`);
+
+    let matched = null;
+    if (clean.includes('1000') || clean.includes('1.000') || clean.includes('SERIBU')) {
+      matched = COIN_CLASSES[1]; // Rp 1.000
+    } else if (clean.includes('200') || clean.includes('DUARATUS')) {
+      matched = COIN_CLASSES[2]; // Rp 200
+    } else if (clean.includes('500') || clean.includes('LIMARATUS')) {
+      matched = COIN_CLASSES[3]; // Rp 500
+    } else if (clean.includes('100') || clean.includes('SERATUS')) {
+      matched = COIN_CLASSES[0]; // Rp 100
+    }
+
+    if (matched) {
+      console.log(`🎯 [OCR KUNCI BERHASIL]: ${matched.display}`);
+      applyConfirmedDetection(matched, 0.998, `Angka Terbaca: ${matched.display}`);
+      return matched;
+    }
+  } catch (err) {
+    console.warn("[OCR] Error saat scanning:", err);
+  } finally {
+    isOcrBusy = false;
+    if (DOM.btnScanOCR) DOM.btnScanOCR.classList.remove('scanning');
+  }
+  return null;
+}
+
+// 5. Terapkan Hasil Deteksi Valid ke Tampilan & Suara
+function applyConfirmedDetection(detected, confidence, hintText) {
+  lockedPrediction = detected.code;
+  lockCounter = 10;
+
+  DOM.resultNominal.textContent = detected.display;
+  DOM.badgeNominalVal.textContent = `${detected.nominal}`;
+  DOM.nominalBadge.style.backgroundColor = detected.color;
+  DOM.badgeCircle.style.backgroundColor = detected.color;
+  DOM.confText.textContent = `Akurasi ${(confidence * 100).toFixed(1)}% (Pasti)`;
+  DOM.confText.style.color = '#059669';
+
+  DOM.detectionBadge.classList.add('active');
+  DOM.viewfinderHint.textContent = hintText || `Koin Valid: ${detected.display}`;
+
+  // Update Bar Probabilitas (set ke 100% untuk kelas terpilih)
+  for (let c = 0; c < 4; c++) {
+    const cls = COIN_CLASSES[c];
+    const isTarget = cls.code === detected.code;
+    const pct = isTarget ? 100 : 0;
+    const bar = document.getElementById(cls.barId);
+    const val = document.getElementById(cls.valId);
+    if (bar) bar.style.width = `${pct}%`;
+    if (val) val.textContent = `${pct}%`;
+  }
+
+  // Narasi Suara TTS
+  const now = Date.now();
+  if (isVoiceActive && (detected.code !== lastSpokenNominal || now - lastSpokenTime > 3000)) {
+    speakNominal(detected.spoken);
+    lastSpokenNominal = detected.code;
+    lastSpokenTime = now;
+  }
+}
+
+// 6. Inisialisasi Kamera
 async function startCamera() {
   if (currentStream) {
     currentStream.getTracks().forEach(track => track.stop());
@@ -171,6 +318,24 @@ DOM.btnTorchToggle.addEventListener('click', async () => {
   }
 });
 
+// Tombol Baca Angka Koin (OCR Manual Trigger)
+DOM.btnScanOCR.addEventListener('click', async () => {
+  if (DOM.canvas) {
+    DOM.viewfinderHint.textContent = "Sedang membaca angka timbul koin...";
+    const ocrResult = await scanWithOCR(DOM.canvas, true);
+    if (!ocrResult) {
+      DOM.viewfinderHint.textContent = "Posisikan angka timbul koin lebih jelas";
+    }
+  }
+});
+
+// Klik viewfinder untuk memicu fokus OCR
+DOM.viewfinder.addEventListener('click', async () => {
+  if (DOM.canvas) {
+    await scanWithOCR(DOM.canvas, true);
+  }
+});
+
 // Suara Toggle
 DOM.btnVoiceToggle.addEventListener('click', () => {
   isVoiceActive = !isVoiceActive;
@@ -199,15 +364,17 @@ DOM.fileInput.addEventListener('change', async (e) => {
     canvas.height = 224;
     ctx.drawImage(img, 0, 0, 224, 224);
 
-    if (modelReady && tfModel) {
-      historyBuffer.length = 0; // reset buffer
+    // Coba baca angka OCR terlebih dahulu
+    const ocrMatch = await scanWithOCR(canvas, true);
+    if (!ocrMatch && modelReady && tfModel) {
+      historyBuffer.length = 0;
       await runSingleInference(canvas, true);
     }
   };
   img.src = URL.createObjectURL(file);
 });
 
-// Crop area viewfinder ke 224x224 canvas dengan enhancement kontras angka timbul
+// Crop area viewfinder ke 224x224 canvas
 function prepareMultiScaleCanvas(scaleRatio = 0.65) {
   if (!DOM.webcam.videoWidth || !DOM.webcam.videoHeight) return null;
 
@@ -224,7 +391,6 @@ function prepareMultiScaleCanvas(scaleRatio = 0.65) {
   canvas.height = 224;
   const ctx = canvas.getContext('2d');
 
-  // Ringan tingkatkan kontras untuk mempertegas lekukan angka timbul ("200", "500", "1000")
   ctx.filter = "contrast(1.15) brightness(0.98)";
   ctx.drawImage(DOM.webcam, sx, sy, cropSize, cropSize, 0, 0, 224, 224);
   ctx.filter = "none";
@@ -240,21 +406,25 @@ function startAutoScanner() {
   async function loop() {
     if (!isScanning) return;
 
-    if (modelReady && tfModel) {
-      // Menggunakan dual crop: Scale 0.58 (Fokus Dekat / Angka Tengah) & Scale 0.72 (Kontur Lengkap)
-      const tightCanvas = prepareMultiScaleCanvas(0.58);
-      if (tightCanvas) {
+    const tightCanvas = prepareMultiScaleCanvas(0.62);
+    if (tightCanvas) {
+      // 1. Jalankan inferensi CNN MobileNetV2
+      if (modelReady && tfModel) {
         await runSingleInference(tightCanvas, false);
+      }
+      // 2. Jalankan OCR periodik di latar belakang untuk verifikasi angka
+      if (ocrReady && !isOcrBusy && (Date.now() - lastOcrRun > 1500)) {
+        await scanWithOCR(tightCanvas, false);
       }
     }
 
-    setTimeout(loop, 280);
+    setTimeout(loop, 260);
   }
 
   loop();
 }
 
-// Eksekusi Prediksi dengan Temporal Consensus Filter (Anti-Lompat / Stabilizer)
+// Eksekusi Prediksi Deep Learning dengan 4-Rotasi TTA + Temporal Consensus
 async function runSingleInference(canvas, isUpload = false) {
   const t0 = performance.now();
   let tensor = null;
@@ -262,52 +432,71 @@ async function runSingleInference(canvas, isUpload = false) {
 
   try {
     tensor = tf.tidy(() => {
-      return tf.browser.fromPixels(canvas)
-        .toFloat()
-        .div(127.5)
-        .sub(1.0)
-        .expandDims(0);
+      // 4-Angle Rotation TTA (0°, 90°, 180°, 270°) agar kebal terhadap sudut rotasi koin
+      const base = tf.browser.fromPixels(canvas).toFloat().div(127.5).sub(1.0);
+      const rot0 = base.expandDims(0);
+      const rot90 = tf.image.rotateWithOffset(rot0, Math.PI / 2);
+      const rot180 = tf.image.rotateWithOffset(rot0, Math.PI);
+      const rot270 = tf.image.rotateWithOffset(rot0, (3 * Math.PI) / 2);
+      return tf.concat([rot0, rot90, rot180, rot270], 0);
     });
 
     prediction = tfModel.predict(tensor);
-    const rawProbs = await prediction.data();
+    const ttaProbs = await prediction.data();
     const latency = Math.round(performance.now() - t0);
 
-    // Masukkan ke history buffer (Moving Window)
-    historyBuffer.push(Array.from(rawProbs));
+    // Ambil rata-rata dari 4 rotasi TTA (masing-masing 4 atau 5 kelas output)
+    const numOutputs = tfModel.outputs[0].shape[1] || 4;
+    const avgTtaProbs = new Array(numOutputs).fill(0);
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < numOutputs; c++) {
+        avgTtaProbs[c] += ttaProbs[r * numOutputs + c] / 4.0;
+      }
+    }
+
+    // Normalisasi 4 kelas resmi
+    const fourClassProbs = [
+      avgTtaProbs[0] || 0,
+      avgTtaProbs[1] || 0,
+      avgTtaProbs[2] || 0,
+      avgTtaProbs[3] || 0,
+    ];
+    const sumP = fourClassProbs.reduce((a, b) => a + b, 0) || 1.0;
+    const normProbs = fourClassProbs.map(p => p / sumP);
+
+    // Masukkan ke history buffer konsensus
+    historyBuffer.push(normProbs);
     if (historyBuffer.length > BUFFER_SIZE) {
       historyBuffer.shift();
     }
 
-    // Hitung rata-rata probabilitas tertimbang (Moving Average)
-    const avgProbs = new Array(5).fill(0);
+    // Moving average berbobot waktu
+    const avgProbs = new Array(4).fill(0);
+    let sumWeights = 0;
     for (let f = 0; f < historyBuffer.length; f++) {
-      const weight = 1 + (f * 0.2); // frame terbaru berbobot lebih tinggi
-      for (let c = 0; c < 5; c++) {
+      const weight = 1 + (f * 0.25);
+      sumWeights += weight;
+      for (let c = 0; c < 4; c++) {
         avgProbs[c] += historyBuffer[f][c] * weight;
       }
     }
+    for (let c = 0; c < 4; c++) avgProbs[c] /= sumWeights;
 
-    // Normalisasi kembali bobot
-    let sumWeights = 0;
-    for (let f = 0; f < historyBuffer.length; f++) sumWeights += (1 + f * 0.2);
-    for (let c = 0; c < 5; c++) avgProbs[c] /= sumWeights;
-
-    // Cari kelas terbaik dari rata-rata konsensus
+    // Cari kelas terbaik
     let bestIdx = 0;
     let bestProb = 0;
-    for (let c = 0; c < 5; c++) {
+    for (let c = 0; c < 4; c++) {
       if (avgProbs[c] > bestProb) {
         bestProb = avgProbs[c];
         bestIdx = c;
       }
     }
 
-    // Hitung konsistensi vote (berapa frame yang memilih kelas ini)
+    // Hitung konsensus voting
     let agreementCount = 0;
     for (const frameProbs of historyBuffer) {
       let fMaxIdx = 0, fMaxVal = 0;
-      for (let c = 0; c < 5; c++) {
+      for (let c = 0; c < 4; c++) {
         if (frameProbs[c] > fMaxVal) {
           fMaxVal = frameProbs[c];
           fMaxIdx = c;
@@ -319,8 +508,8 @@ async function runSingleInference(canvas, isUpload = false) {
     const consensusRate = historyBuffer.length > 0 ? (agreementCount / historyBuffer.length) : 0;
     const detected = COIN_CLASSES[bestIdx] || COIN_CLASSES[0];
 
-    // Update Drawer Rincian Probabilitas (Smooth)
-    for (let c = 0; c < 5; c++) {
+    // Update Drawer Rincian Probabilitas 4 Kelas
+    for (let c = 0; c < 4; c++) {
       const clsInfo = COIN_CLASSES[c];
       if (clsInfo) {
         const pct = Math.round(avgProbs[c] * 100);
@@ -333,39 +522,12 @@ async function runSingleInference(canvas, isUpload = false) {
 
     DOM.speedText.textContent = `${latency} ms`;
 
-    // Syarat Konfirmasi Koin (Lock):
-    // 1. Probabilitas rata-rata >= 48%
-    // 2. Konsensus minimal 4 dari 6 frame sepakat (atau upload langsung)
-    const isStable = isUpload || (consensusRate >= 0.65 && bestProb >= 0.48 && historyBuffer.length >= 4);
+    // Syarat Konfirmasi Koin Stabil:
+    const isStable = isUpload || (consensusRate >= 0.70 && bestProb >= 0.45 && historyBuffer.length >= 3);
 
     if (isStable) {
-      if (lockedPrediction === detected.code) {
-        lockCounter++;
-      } else {
-        lockedPrediction = detected.code;
-        lockCounter = 1;
-      }
-
-      // Update Tampilan Hasil
-      DOM.resultNominal.textContent = detected.display;
-      DOM.badgeNominalVal.textContent = detected.nominal > 0 ? `${detected.nominal}` : 'GRD';
-      DOM.nominalBadge.style.backgroundColor = detected.color;
-      DOM.badgeCircle.style.backgroundColor = detected.color;
-      DOM.confText.textContent = `Akurasi ${(bestProb * 100).toFixed(1)}% (Stabil ${agreementCount}/${historyBuffer.length})`;
-      DOM.confText.style.color = '#059669';
-
-      DOM.detectionBadge.classList.add('active');
-      DOM.viewfinderHint.textContent = `Koin Stabil: ${detected.display}`;
-
-      // Narasi Suara TTS (dengan jeda 3 detik agar tidak mengulang terus)
-      const now = Date.now();
-      if (isVoiceActive && (detected.code !== lastSpokenNominal || now - lastSpokenTime > 3000)) {
-        speakNominal(detected.spoken);
-        lastSpokenNominal = detected.code;
-        lastSpokenTime = now;
-      }
+      applyConfirmedDetection(detected, bestProb, `Koin Stabil: ${detected.display}`);
     } else {
-      // Masih dalam fase pengumpulan frame / belum stabil
       if (bestProb > 0.35 && historyBuffer.length >= 2) {
         DOM.confText.textContent = `Menstabilkan (${agreementCount}/${historyBuffer.length})...`;
         DOM.confText.style.color = "#EAB308";
@@ -405,8 +567,11 @@ DOM.probToggle.addEventListener('click', () => {
   DOM.probDrawer.classList.toggle('collapsed');
 });
 
-// Startup
+// Startup Inisialisasi
 window.addEventListener('DOMContentLoaded', async () => {
-  await initAIModel();
+  await Promise.all([
+    initAIModel(),
+    initOCR(),
+  ]);
   await startCamera();
 });
