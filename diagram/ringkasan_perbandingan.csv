@@ -1,4 +1,5 @@
-Model,Accuracy,Precision (Macro),Recall (Macro),F1 (Macro),Parameter (juta),Ukuran (MB),Training (menit),Inferensi (ms)
-CNN Base,0.7753,0.7858,0.7848,0.7698,0.39,1.5,34.62,24.284
-GoogLeNet,0.9438,0.9495,0.9429,0.945,5.6,21.54,15.59,48.315
-MobileNetV2,0.9101,0.9266,0.911,0.9138,2.23,8.73,14.9,23.77
+Model,Accuracy (%),Precision Macro (%),Recall Macro (%),F1-Score Macro (%),Params (Juta),Size (MB),Infer Time (ms),Best Epoch
+CNN Base,73.03,75.02,74.53,71.99,1.21,4.63,27.64,20
+Custom CNN,73.03,75.02,74.53,71.99,1.21,4.63,27.64,20
+GoogLeNet,94.38,94.95,94.29,94.5,5.6,21.54,48.32,20
+MobileNetV2,91.01,92.66,91.1,91.38,2.23,8.73,23.77,20

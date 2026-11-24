@@ -18,3 +18,5 @@ desktop.ini
 .env
 venv/
 env/
+
+*.zip
